@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  labels:
+    app: rabbitmq
+spec:
+  selector:
+    matchLabels: 
+      app: rabbitmq
+  serviceName: rabbitmq
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      serviceAccountName: rabbitmq
+      terminationGracePeriodSeconds: 10
+      initContainers:
+      - name: copy-rabbitmq-config
+        image: rabbitmq:3.7.15
+        imagePullPolicy: Always
+        command:
+          - /bin/bash
+          - -euc
+          - |
+            # Remove cached erlang cookie since we are always providing it,
+            # that opens the way to recreate the application and access to existing data
+            # as a new erlang will be regenerated again.
+            rm -f /var/lib/rabbitmq/.erlang.cookie
+            # Copy the mounted configuration to both places.
+            cp /rabbitmqconfig/rabbitmq.conf /etc/rabbitmq/rabbitmq.conf
+            cp /rabbitmqconfig/enabled_plugins /etc/rabbitmq/enabled_plugins
+        volumeMounts:
+          - name: configmap
+            mountPath: /rabbitmqconfig
+          - name: config
+            mountPath: /etc/rabbitmq
+          - name: rabbitmq-volume
+            mountPath: /var/lib/rabbitmq
+      containers:
+      - name: rabbitmq-k8s
+        image: rabbitmq:3.7.15
+        volumeMounts:
+          - name: config
+            mountPath: /etc/rabbitmq
+          - name: rabbitmq-volume
+            mountPath: /var/lib/rabbitmq
+        ports:
+          - name: http
+            protocol: TCP
+            containerPort: 15672
+          - name: amqp
+            protocol: TCP
+            containerPort: 5672
+        livenessProbe:
+          exec:
+            command: ["rabbitmqctl", "status"]
+          initialDelaySeconds: 60
+          # See https://www.rabbitmq.com/monitoring.html for monitoring frequency recommendations.
+          periodSeconds: 60
+          timeoutSeconds: 15
+        readinessProbe:
+          exec:
+            command: ["rabbitmqctl", "status"]
+          initialDelaySeconds: 20
+          periodSeconds: 60
+          timeoutSeconds: 10
+        imagePullPolicy: Always
+        env:
+          - name: MY_POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: MY_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: MY_POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: RABBITMQ_USE_LONGNAME
+            value: "true"
+          # See a note on cluster_formation.k8s.address_type in the config file section
+          - name: K8S_SERVICE_NAME
+            value: "rabbitmq"
+          - name: RABBITMQ_NODENAME
+            value: rabbit@$(MY_POD_NAME).$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE).svc.cluster.local
+          - name: K8S_HOSTNAME_SUFFIX
+            value: .$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE).svc.cluster.local
+          - name: RABBITMQ_ERLANG_COOKIE
+            value: "E96F1D3503F2B3CAA6AA73EDA3B23147"
+          - name: RABBITMQ_DEFAULT_USER
+            value: "guest"
+          - name: RABBITMQ_DEFAULT_PASS
+            valueFrom:
+              secretKeyRef:
+                name: rabbitmq-credentials
+                key: RABBITMQ_DEFAULT_PASS
+      volumes:
+        - name: configmap
+          configMap:
+            name: rabbitmq-config
+            items:
+            - key: rabbitmq.conf
+              path: rabbitmq.conf
+            - key: enabled_plugins
+              path: enabled_plugins
+        - name: config
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: rabbitmq-volume
+        labels:
+          app: rabbitmq
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 4Gi

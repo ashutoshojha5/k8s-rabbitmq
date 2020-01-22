@@ -1,0 +1,19 @@
+# apiVersion and kind of Kustomization
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Adds namespace to all resources.
+#namespace: my-namespace
+
+# Labels to add to all resources and selectors.
+#commonLabels:
+#  someName: someValue
+#  owner: alice
+#  app: bingo
+
+resources:
+- configmap.yaml
+- secrets.yaml
+- rbac.yaml
+- service.yaml
+- statefulset.yaml
